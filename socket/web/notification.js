@@ -4,7 +4,7 @@ const sendnotification = async (io, socket) => {
         console.log(`web has send a notification`)
         console.log(`socket server will trigger notification refresh to all clients`)
         
-        socket.emit("receivenotification", "")
+        io.emit("receivenotification", "")
     })
 }
 
