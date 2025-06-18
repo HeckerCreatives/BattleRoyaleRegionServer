@@ -1,10 +1,10 @@
 const sendnotification = async (io, socket) => {
-    socket.on("sendnotification", (data) => {
+    socket.on("sendnewsandshowcase", (data) => {
 
-        console.log(`web has send a notification`)
-        console.log(`socket server will trigger notification refresh to all clients`)
+        console.log(`web has send a news and showcase ${data}`)
+        console.log(`socket server will trigger news and showcase notification refresh to all clients`)
         
-        socket.broadcast.emit("receivenotification", "")
+        socket.broadcast.emit("receivenotification", data)
     })
 }
 
