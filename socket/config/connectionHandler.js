@@ -46,18 +46,19 @@ exports.eventconnection = (io, socket, ) => {
         socketHeartbeats.delete(socket.id);
     };
 
-    const forceLogout = () => {
+    const forceLogout = (sock) => {
         stopHeartbeat();
 
         for (const [userId, sockId] of activeUsers.entries()) {
-            if (sockId === socket.id) {
+            if (sockId === sock.id) {
                 activeUsers.delete(userId);
                 console.log(`Force-logged out ${userId}`);
                 break;
             }
         }
-        socket.emit("duallogin", "")
-        socket.disconnect(true);
+
+        sock.emit("duallogin", "")
+        sock.disconnect(true)
     };
 
     //  #region SOCKET MAIN EVENTS
