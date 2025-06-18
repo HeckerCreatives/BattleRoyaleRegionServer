@@ -1,10 +1,11 @@
 const { activeUsers, socketHeartbeats } = require("./socketstates")
+const {sendnotification} = require("../web/notification")
 
 const HEARTBEAT_INTERVAL = 5000; // Send ping every 10 seconds
 const TIMEOUT = 10000;            // Wait 10 seconds for pong
 const MAX_MISSED_PINGS = 3;
 
-exports.eventconnection = (io, socket, ) => {
+exports.eventconnection = (io, socket) => {
     let currentUserId = null;
 
     const startHeartbeat = () => {
@@ -105,5 +106,9 @@ exports.eventconnection = (io, socket, ) => {
 
     //  #endregion
 
+    //  #region WEB
 
+    sendnotification(io, socket)
+
+    //  #endregion
 }
