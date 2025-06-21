@@ -75,6 +75,7 @@ exports.eventconnection = (io, socket) => {
 
         activeUsers.set(currentUserId, socket.id);
         socket.join(currentUserId);
+        socket.emit("loggedin", "")
         startHeartbeat();
 
         console.log(`User ${currentUserId} logged in on ${socket.id}`);
