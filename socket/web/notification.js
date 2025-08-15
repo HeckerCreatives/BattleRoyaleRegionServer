@@ -18,7 +18,18 @@ const sendmessagesnotif = async (io, socket) => {
     })
 }
 
+const sendchangeraidboss = async (io, socket) => {
+    socket.on("sendchangeraidboss", (data) => {
+        
+        console.log(`web has send a change raid boss ${data}`)
+        console.log(`socket server will trigger change raid boss notification refresh to all clients`)
+
+        socket.broadcast.emit("receivechangeraidboss", data)
+    })
+}
+
 module.exports = {
     sendnewsandshowcasenotif,
-    sendmessagesnotif
+    sendmessagesnotif,
+    sendchangeraidboss
 }
