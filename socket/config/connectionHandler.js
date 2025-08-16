@@ -34,6 +34,7 @@ exports.eventconnection = (io, socket) => {
 
     socket.on("removeusers", data => {
         const userdata = JSON.parse(data);
+
         console.log(userdata)
         
         const username = userdata.username;
