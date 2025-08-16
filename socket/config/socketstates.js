@@ -1,7 +1,9 @@
 const activeUsers = new Map();
-const socketHeartbeats = new Map(); 
+const matches = []
+const activeMatches = {}
 
 module.exports = {
   activeUsers,
-  socketHeartbeats
+  matches,
+  activeMatches
 };
