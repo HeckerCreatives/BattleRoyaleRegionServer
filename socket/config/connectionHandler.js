@@ -1,5 +1,7 @@
 const { activeUsers } = require("./socketstates")
-const {sendnewsandshowcasenotif, sendmessagesnotif, sendchangeraidboss} = require("../web/notification")
+const { matches, activeMatches } = require("../config/socketstates")
+
+const { findmatchreceive } = require("../server/findmatch")
 
 const HEARTBEAT_INTERVAL = 5000; // Send ping every 10 seconds
 const TIMEOUT = 10000;            // Wait 10 seconds for pong
@@ -30,18 +32,40 @@ exports.eventconnection = (io, socket) => {
         socket.emit("sendusercount", activeUsers.size)
     });
 
+    socket.on("removeusers", data => {
+        const userdata = JSON.parse(data);
+        console.log(userdata)
+        
+        const username = userdata.username;
+        const region = userdata.region;
+
+        const existing = activeUsers.get(username);
+
+        if (existing) {
+            activeUsers.delete(username)
+        }
+
+        console.log(`User ${username} with region ${region} removed on ${process.env.SERVER_REGION}`);
+
+        socket.emit("sendusercount", activeUsers.size)
+    })
+
     socket.on("disconnect", (reason) => {
         console.log(`Master Server Socket ${socket.id} disconnected. Reason: ${reason}`);
         activeUsers.clear()
     });
 
+    socket.on("playerquit", (data) => {
+        const userdata = JSON.parse(data)
+        const username = userdata.username
+        console.log(`User ${username} disconnected.`);
+        for (const match of matches) {
+            const index = match.players.indexOf(username);
+            if (index !== -1) match.players.splice(index, 1);
+        }
+    });
+
     //  #endregion
 
-    //  #region WEB
-
-    sendnewsandshowcasenotif(io, socket)
-    sendmessagesnotif(io, socket)
-    sendchangeraidboss(io, socket)
-
-    //  #endregion
+    findmatchreceive(io, socket)
 }

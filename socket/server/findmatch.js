@@ -12,6 +12,7 @@ function generateRoomName() {
 }
 
 
+//  FOR LINUX
 function launchGameServer(roomName) {
   const logPath = `/ROF/logs/${roomName}.log`;
 
@@ -69,8 +70,12 @@ function launchGameServer(roomName) {
 const findmatchreceive = async (io, socket) => {
     socket.on("findmatchreceive", async (data) => {
 
-        const userdata = JSON.parse(data)
+
+        const userdata = data
         const username = userdata.username
+        const socketid = userdata.socketid
+        
+        console.log(`Find match receive data: ${data}`)
 
         let match = matches.find(m =>
             (m.status === "WAITING" || m.status === "SETTINGUP") &&
@@ -86,6 +91,7 @@ const findmatchreceive = async (io, socket) => {
                 roomName,
                 status: "SETTINGUP",
                 players: [],
+                playersocket: [],
                 maxPlayers: 50
             };
 
@@ -93,9 +99,13 @@ const findmatchreceive = async (io, socket) => {
         }
 
         match.players.push(username);
+        match.players.push(socketid);
 
         if (match.status === "WAITING") {
-            socket.emit("matchfound", match.roomName);
+            socket.emit("matchfound", {
+              roomname: match.roomName,
+              socketid: socketid
+            });
         }
     })
 }
@@ -121,16 +131,13 @@ const changematchstate = async (io, socket) => {
         console.log(`Match "${matchname}" status changed to "${matchstatus}"`);
 
         if (matchstatus === "WAITING") {
-            notifyplayersformatchstatus(match, socket);
+            notifyplayersformatchstatus(match);
         }
     });
 }
 
-const notifyplayersformatchstatus = (match, socket) => {
-    socket.emit("matchstatuschanged", {
-        roomName: match.roomName,
-        status: match.status
-    });
+const notifyplayersformatchstatus = (match) => {
+    socket.emit("matchstatuschanged", match);
 }
 
 //  #endregion
@@ -138,4 +145,5 @@ const notifyplayersformatchstatus = (match, socket) => {
 module.exports = {
     findmatchreceive,
     changematchstate,
+    notifyplayersformatchstatus
 }
