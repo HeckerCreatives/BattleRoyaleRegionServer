@@ -1,7 +1,7 @@
 const { activeUsers } = require("./socketstates")
 const { matches, activeMatches } = require("../config/socketstates")
 
-const { findmatchreceive } = require("../server/findmatch")
+const { findmatchreceive, changematchstate } = require("../server/findmatch")
 
 const HEARTBEAT_INTERVAL = 5000; // Send ping every 10 seconds
 const TIMEOUT = 10000;            // Wait 10 seconds for pong
@@ -69,4 +69,5 @@ exports.eventconnection = (io, socket) => {
     //  #endregion
 
     findmatchreceive(io, socket)
+    changematchstate(io, socket)
 }

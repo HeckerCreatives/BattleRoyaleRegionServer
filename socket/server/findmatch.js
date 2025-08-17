@@ -99,7 +99,7 @@ const findmatchreceive = async (io, socket) => {
         }
 
         match.players.push(username);
-        match.players.push(socketid);
+        match.playersocket.push(socketid);
 
         if (match.status === "WAITING") {
             socket.emit("matchfound", {
@@ -131,13 +131,14 @@ const changematchstate = async (io, socket) => {
         console.log(`Match "${matchname}" status changed to "${matchstatus}"`);
 
         if (matchstatus === "WAITING") {
-            notifyplayersformatchstatus(match);
+            notifyplayersformatchstatus(match, io);
         }
     });
 }
 
-const notifyplayersformatchstatus = (match) => {
-    socket.emit("matchstatuschanged", match);
+const notifyplayersformatchstatus = (match, io) => {
+    console.log(`SENDING MATCH STATUS ${match.status}`)
+    io.emit("matchstatuschanged", match);
 }
 
 //  #endregion
