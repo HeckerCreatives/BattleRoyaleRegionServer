@@ -101,11 +101,14 @@ const findmatchreceive = async (io, socket) => {
         match.players.push(username);
         match.playersocket.push(socketid);
 
+        console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`)
+
         if (match.status === "WAITING") {
-            socket.emit("matchfound", {
-              roomname: match.roomName,
-              socketid: socketid
-            });
+          console.log(`SENDING MATCH STATUS TO ${socketid} WITH MATCH DATA STATUS: ${match.status}  ROOM: ${match.roomName}`)
+          socket.emit("matchfound", {
+            roomname: match.roomName,
+            socketid: socketid
+          });
         }
     })
 }
