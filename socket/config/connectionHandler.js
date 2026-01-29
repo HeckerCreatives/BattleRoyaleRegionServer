@@ -66,6 +66,48 @@ exports.eventconnection = (io, socket) => {
         }
     });
 
+    socket.on("quitonmatch", data => {
+        const username = data.username;
+        const roomname = data.roomname;
+        const socketid = data.socketid;
+
+        console.log(`User ${username} socket ${socketid} quit on match room ${roomname}.`);
+
+        const match = matches.find(m => m.roomName === roomname);
+
+        if (!match) {
+            console.warn(`⚠️ Match not found: ${roomname}`);
+            return;
+        }
+
+        // remove player
+        const playerIndex = match.players.indexOf(username);
+        if (playerIndex !== -1) {
+            match.players.splice(playerIndex, 1);
+            match.playersocket.splice(playerIndex, 1);
+        }
+
+        // if room is empty → remove it
+        if (match.players.length === 0) {
+            const index = matches.findIndex(m => m.roomName === roomname);
+            if (index !== -1) {
+                matches.splice(index, 1);
+                console.log(`🗑️ Room ${roomname} removed (empty)`);
+            }
+            return;
+        }
+
+        // send updated room state
+        socket.emit("waitingroomupdate", {
+            roomName: match.roomName,
+            players: match.players,
+            playerSocket: match.playersocket,
+            maxPlayers: match.maxPlayers,
+            status: match.status,
+            countdown: match.countdown
+        });
+    });
+
     //  #endregion
 
     findmatchreceive(io, socket)

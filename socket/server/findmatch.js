@@ -4,6 +4,24 @@ var en = require("nanoid-good/locale/en")
 var customAlphabet = require("nanoid-good").customAlphabet(en);
 const generatedname = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 12);
 const path = require("path");
+const os = require("os");
+
+const matchQueue = [];
+const MAX_QUEUE_SIZE = 2000;
+const QUEUE_BATCH_SIZE = 2;
+
+// resource assumptions
+const RAM_PER_SESSION_MB = 400;
+const MAX_CPU_LOAD = 0.85;
+
+function isServerHealthy() {
+    const freeRAM = os.freemem() / 1024 / 1024;
+    const cpuLoad = os.loadavg()[0] / os.cpus().length;
+    const activeSessions = Object.keys(activeMatches).length;
+
+    const requiredRAM = (activeSessions + 1) * RAM_PER_SESSION_MB;
+    return freeRAM > requiredRAM && cpuLoad < MAX_CPU_LOAD;
+}
 
 //  #region SERVER APP CREATION
 
@@ -122,7 +140,6 @@ function launchGameWindowsServer(roomName) {
 const findmatchreceive = async (io, socket) => {
     socket.on("findmatchreceive", async (data) => {
 
-
         const userdata = data
         const username = userdata.username
         const socketid = userdata.socketid
@@ -130,26 +147,22 @@ const findmatchreceive = async (io, socket) => {
         console.log(`Find match receive data: ${data}`)
 
         let match = matches.find(m =>
-            (m.status === "WAITING" || m.status === "SETTINGUP") &&
+            m.status === "WAITING" &&
             m.players.length < m.maxPlayers
         );
 
         if (!match) {
             const roomName = generateRoomName();
 
-            if (process.env.SERVER_TYPE == "windows"){
-              launchGameWindowsServer(roomName)
-            }
-            else{
-              launchGameServer(roomName);
-            }
-
             match = {
                 roomName,
-                status: "SETTINGUP",
+                status: "WAITING",
                 players: [],
                 playersocket: [],
-                maxPlayers: 50
+                maxPlayers: 20,
+                countdownStarted: false,
+                countdown: 150,
+                interval: null
             };
 
             matches.push(match);
@@ -160,14 +173,55 @@ const findmatchreceive = async (io, socket) => {
 
         console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`)
 
-        if (match.status === "WAITING") {
-          console.log(`SENDING MATCH STATUS TO ${socketid} WITH MATCH DATA STATUS: ${match.status}  ROOM: ${match.roomName}`)
-          socket.emit("matchfound", {
-            roomname: match.roomName,
-            socketid: socketid
-          });
+        socket.emit("waitingroomupdate", {
+            roomName: match.roomName,
+            players: match.players,
+            playerSocket: match.playersocket,
+            maxPlayers: match.maxPlayers,
+            status: match.status,
+            countdown: match.countdown
+        });
+
+        if ( match.players.length >= 1 && !match.countdownStarted) {
+            startLobbyCountdown(match, io);
         }
     })
+}
+
+function startLobbyCountdown(match, io) {
+    match.countdownStarted = true;
+
+    let timeLeft = 150;
+
+    match.countdown = 150;
+
+    match.interval = setInterval(() => {
+        timeLeft--;
+        match.countdown = timeLeft
+        if (timeLeft <= 0) {
+            clearInterval(match.interval);
+            startPhotonServer(match, io);
+        }
+    }, 1000);
+}
+
+function startPhotonServer(match, io) {
+  match.status = "STARTING";
+
+  if (process.env.SERVER_TYPE === "windows") {
+      launchGameWindowsServer(match.roomName);
+  } else {
+      launchGameServer(match.roomName);
+  }
+
+  // OPTIONAL: wait for health check here
+
+  io.to(match.roomName).emit("matchfound", {
+    roomname: match.roomName,
+    matchdata: match
+  });
+
+  match.status = "BATTLE";
 }
 
 const needtoreconnect = async (io, socket) => {
@@ -187,7 +241,14 @@ const needtoreconnect = async (io, socket) => {
         console.log(`✅ Player ${username} reconnected: oldSocket=${oldSocket}, newSocket=${socketid}`);
 
         // Return updated match only to the reconnecting socket
-        socket.emit("reconnectexist", match);
+        socket.emit("reconnectexist", {
+            roomName: match[0].roomName,
+            players: match[0].players,
+            playerSocket: match[0].playersocket,
+            maxPlayers: match[0].maxPlayers,
+            status: match[0].status,
+            countdown: match[0].countdown
+        });
       }
       else{
         console.log(`⚠️ No active match found for ${username}`);
