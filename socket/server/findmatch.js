@@ -7,11 +7,11 @@ const path = require("path");
 const os = require("os");
 
 const matchQueue = [];
-const MAX_QUEUE_SIZE = 2000;
+const MAX_QUEUE_SIZE = 400;
 const QUEUE_BATCH_SIZE = 2;
 
 // resource assumptions
-const RAM_PER_SESSION_MB = 400;
+const RAM_PER_SESSION_MB = 500;
 const MAX_CPU_LOAD = 0.85;
 
 function isServerHealthy() {
@@ -22,6 +22,33 @@ function isServerHealthy() {
     const requiredRAM = (activeSessions + 1) * RAM_PER_SESSION_MB;
     return freeRAM > requiredRAM && cpuLoad < MAX_CPU_LOAD;
 }
+
+function processMatchQueue() {
+    if (!isServerHealthy()) {
+      console.log("SERVER NOT HEALTHY")
+      return;
+    }
+    if (matchQueue.length === 0) return;
+
+    const batch = matchQueue.splice(0, QUEUE_BATCH_SIZE);
+
+    for (const queued of batch) {
+      console.log(`process queue and re emit by ${queued.username}  ${queued.socketid}`)
+      HandleFindMatchReceiveOnServerHealthy(queued.io, queued.socket, {
+          username: queued.username,
+          socketid: queued.socketid
+      })
+      // queued.socket.emit("findmatchreceive", {
+      //     username: queued.username,
+      //     socketid: queued.socketid
+      // });
+    }
+}
+
+setInterval(() => {
+  console.log("CHECK SERVER QUEUE")
+  processMatchQueue();
+}, 5000); // 2–5 seconds is perfect
 
 //  #region SERVER APP CREATION
 
@@ -85,8 +112,8 @@ function launchGameServer(roomName) {
 
 //  FOR WINDOWS
 
-function launchGameWindowsServer(roomName) {
-  const logPath = path.join("C:", "ROF", "logs", `${roomName}.log`);
+function launchGameWindowsServer(match) {
+  const logPath = path.join("C:", "ROF", "logs", `${match.roomName}.log`);
   const exePath = path.join("C:", "ROF", "Rise of Fearless.exe");
 
   const args = [
@@ -96,7 +123,10 @@ function launchGameWindowsServer(roomName) {
     "-region", process.env.SERVER_REGION,
     "-server", "yes",
     "-mapname", "PrototypeMultiplayer",
-    "-roomname", roomName,
+    "-roomname", match.roomName,
+    "-totalplayers", match.players.length,
+    "-totalai", match.ai,
+    "-playernames", JSON.stringify(match.players)
   ];
 
   // ⚡ for production (hidden background)
@@ -109,26 +139,26 @@ function launchGameWindowsServer(roomName) {
 
   child.unref();
 
-  activeMatches[roomName] = {
+  activeMatches[match.roomName] = {
     pid: child.pid,
-    roomName,
+    roomName: match.roomName,
     logPath,
     launchedAt: Date.now()
   };
 
-  console.log(`Launched Fusion server with room: ${roomName}`);
+  console.log(`Launched Fusion server with room: ${match.roomName}`);
 
   child.on("exit", (code, signal) => {
-    console.log(`Server for room "${roomName}" exited (code: ${code}, signal: ${signal})`);
-    delete activeMatches[roomName];
-    const index = matches.findIndex(m => m.roomName === roomName);
+    console.log(`Server for room "${match.roomName}" exited (code: ${code}, signal: ${signal})`);
+    delete activeMatches[match.roomName];
+    const index = matches.findIndex(m => m.roomName === match.roomName);
     if (index !== -1) matches.splice(index, 1);
   });
 
   child.on("error", (err) => {
-    console.error(`Error launching server for room "${roomName}":`, err);
-    delete activeMatches[roomName];
-    const index = matches.findIndex(m => m.roomName === roomName);
+    console.error(`Error launching server for room "${match.roomName}":`, err);
+    delete activeMatches[match.roomName];
+    const index = matches.findIndex(m => m.roomName === match.roomName);
     if (index !== -1) matches.splice(index, 1);
   });
 }
@@ -143,6 +173,24 @@ const findmatchreceive = async (io, socket) => {
         const userdata = data
         const username = userdata.username
         const socketid = userdata.socketid
+
+        // prevent duplicate queue
+        if (matchQueue.some(q => q.username === username)) {
+          return;
+        }
+
+        // server overloaded → queue
+        if (!isServerHealthy()) {
+
+          console.log("SERVER NOT HEALTHY ON FIND MATCH RECEIVE")
+
+          if (matchQueue.length >= MAX_QUEUE_SIZE) {
+              return;
+          }
+
+          matchQueue.push({ username, socketid, socket, io });
+          return;
+        }
         
         console.log(`Find match receive data: ${data}`)
 
@@ -159,11 +207,15 @@ const findmatchreceive = async (io, socket) => {
                 status: "WAITING",
                 players: [],
                 playersocket: [],
-                maxPlayers: 20,
+                maxPlayers: 30,
                 countdownStarted: false,
-                countdown: 150,
-                interval: null
+                countdown: 10,
+                interval: null,
+                ai: 0,
+                serversocket: socket
             };
+
+            activeMatches[roomName] = {}
 
             matches.push(match);
         }
@@ -188,12 +240,87 @@ const findmatchreceive = async (io, socket) => {
     })
 }
 
+function HandleFindMatchReceiveOnServerHealthy (io, socket, data) {
+  
+  const userdata = data
+  const username = userdata.username
+  const socketid = userdata.socketid
+
+  // prevent duplicate queue
+  if (matchQueue.some(q => q.username === username)) {
+    return;
+  }
+
+  // server overloaded → queue
+  if (!isServerHealthy()) {
+
+    console.log("SERVER NOT HEALTHY ON FIND MATCH RECEIVE")
+
+    if (matchQueue.length >= MAX_QUEUE_SIZE) {
+        return;
+    }
+
+    matchQueue.push({ username, socketid, socket, io });
+    return;
+  }
+
+  //  CHECK IF THERE'S STILL A QUEUE IF STILL HAVE, THEN QUEUE THE PLAYER
+  if (matchQueue.length > 0) {
+    matchQueue.push({ username, socketid, socket });
+    return;
+  }
+  
+  console.log(`Find match receive data: ${data}`)
+
+  let match = matches.find(m =>
+      m.status === "WAITING" &&
+      m.players.length < m.maxPlayers
+  );
+
+  if (!match) {
+      const roomName = generateRoomName();
+
+      match = {
+          roomName,
+          status: "WAITING",
+          players: [],
+          playersocket: [],
+          maxPlayers: 30,
+          countdownStarted: false,
+          countdown: 10,
+          interval: null
+      };
+
+      activeMatches[roomName] = {}
+
+      matches.push(match);
+  }
+
+  match.players.push(username);
+  match.playersocket.push(socketid);
+
+  console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`)
+
+  socket.emit("waitingroomupdate", {
+      roomName: match.roomName,
+      players: match.players,
+      playerSocket: match.playersocket,
+      maxPlayers: match.maxPlayers,
+      status: match.status,
+      countdown: match.countdown
+  });
+
+  if ( match.players.length >= 1 && !match.countdownStarted) {
+      startLobbyCountdown(match, io);
+  }
+}
+
 function startLobbyCountdown(match, io) {
     match.countdownStarted = true;
 
-    let timeLeft = 150;
+    let timeLeft = 10;
 
-    match.countdown = 150;
+    match.countdown = 10;
 
     match.interval = setInterval(() => {
         timeLeft--;
@@ -209,16 +336,18 @@ function startPhotonServer(match, io) {
   match.status = "STARTING";
 
   if (process.env.SERVER_TYPE === "windows") {
-      launchGameWindowsServer(match.roomName);
+      launchGameWindowsServer(match);
   } else {
       launchGameServer(match.roomName);
   }
 
   // OPTIONAL: wait for health check here
 
-  io.to(match.roomName).emit("matchfound", {
-    roomname: match.roomName,
-    matchdata: match
+  match.serversocket.emit("enteringmatch",{
+    roomName: match.roomName,
+    playerSocket: match.playersocket,
+    maxPlayers: match.maxPlayers,
+    status: match.status
   });
 
   match.status = "BATTLE";
@@ -242,12 +371,12 @@ const needtoreconnect = async (io, socket) => {
 
         // Return updated match only to the reconnecting socket
         socket.emit("reconnectexist", {
-            roomName: match[0].roomName,
-            players: match[0].players,
-            playerSocket: match[0].playersocket,
-            maxPlayers: match[0].maxPlayers,
-            status: match[0].status,
-            countdown: match[0].countdown
+          roomName: match.roomName,
+          players: match.players,
+          playerSocket: match.playersocket,
+          maxPlayers: match.maxPlayers,
+          status: match.status,
+          countdown: match.countdown
         });
       }
       else{
@@ -353,7 +482,7 @@ const changematchstate = async (io, socket) => {
 
 const notifyplayersformatchstatus = (match, io) => {
     console.log(`SENDING MATCH STATUS ${match.status}`)
-    io.emit("matchstatuschanged", match);
+    match.serversocket.emit("matchstatuschanged", match);
 }
 
 //  #endregion
