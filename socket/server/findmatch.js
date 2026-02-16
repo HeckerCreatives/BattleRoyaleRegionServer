@@ -59,8 +59,8 @@ function generateRoomName() {
 
 
 //  FOR LINUX
-function launchGameServer(roomName) {
-  const logPath = `/ROF/logs/${roomName}.log`;
+function launchGameServer(match) {
+  const logPath = `/ROF/logs/${match.roomName}.log`;
 
   const args = [
     "-a",
@@ -71,7 +71,10 @@ function launchGameServer(roomName) {
     "-region", process.env.SERVER_REGION,
     "-server", "yes",
     "-mapname", "PrototypeMultiplayer",
-    "-roomname", roomName,
+    "-roomname", match.roomName,
+    "-totalplayers", match.players.length,
+    "-totalai", match.ai,
+    "-playernames", JSON.stringify(match.players)
   ];
 
   const child = spawn("xvfb-run", args, {
@@ -82,28 +85,27 @@ function launchGameServer(roomName) {
 
   child.unref(); // <-- Call this separately
   
-  activeMatches[roomName] = {
+  activeMatches[match.roomName] = {
     pid: child.pid,
-    roomName,
+    roomName: match.roomName,
     logPath,
     launchedAt: Date.now()
   };
 
-  console.log(`Launched Fusion server with room: ${roomName}`);
+  console.log(`Launched Fusion server with room: ${match.roomName}`);
 
   // 🧼 Cleanup on exit
   child.on("exit", (code, signal) => {
-    console.log(`Server for room "${roomName}" exited (code: ${code}, signal: ${signal})`);
-    delete activeMatches[roomName];
-    const index = matches.findIndex(m => m.roomName === roomName);
+    console.log(`Server for room "${match.roomName}" exited (code: ${code}, signal: ${signal})`);
+    delete activeMatches[match.roomName];
+    const index = matches.findIndex(m => m.roomName === match.roomName);
     if (index !== -1) matches.splice(index, 1);
   });
 
-  // Optional: listen for errors
   child.on("error", (err) => {
-    console.error(`Error launching server for room "${roomName}":`, err);
-    delete activeMatches[roomName];
-    const index = matches.findIndex(m => m.roomName === roomName);
+    console.error(`Error launching server for room "${match.roomName}":`, err);
+    delete activeMatches[match.roomName];
+    const index = matches.findIndex(m => m.roomName === match.roomName);
     if (index !== -1) matches.splice(index, 1);
   });
 }
@@ -338,7 +340,7 @@ function startPhotonServer(match, io) {
   if (process.env.SERVER_TYPE === "windows") {
       launchGameWindowsServer(match);
   } else {
-      launchGameServer(match.roomName);
+      launchGameServer(match);
   }
 
   // OPTIONAL: wait for health check here
@@ -396,6 +398,15 @@ const removereconnect = async (io, socket) => {
     const { username, socketid } = data;
 
     const match = matches.find(m => m.players.includes(username));
+
+    if (match == null){
+      
+      console.log(`🗑️ Removed player because match is null: ${removedPlayer}, socket: ${removedSocket}`);
+
+      socket.emit("doneremovereconnect", { socketid });
+
+      io.emit("gameremoveplayer", username)
+    }
 
     const index = match.players.indexOf(username);
 
