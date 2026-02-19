@@ -6,6 +6,9 @@ const generatedname = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 12)
 const path = require("path");
 const os = require("os");
 
+const Users = require("../../models/Users");
+const PlayerCharacterSetting = require("../../models/Playercharactersettings");
+
 const matchQueue = [];
 const MAX_QUEUE_SIZE = 400;
 const QUEUE_BATCH_SIZE = 2;
@@ -57,10 +60,64 @@ function generateRoomName() {
   return "room_" + generatedname();
 }
 
+async function buildCharacterSettingsPayload(match) {
+  const usernames = match.players;
+
+  // Users -> lookup PlayerCharacterSettings via owner
+  const rows = await Users.aggregate([
+    { $match: { username: { $in: usernames } } },
+
+    // only keep what we need
+    { $project: { username: 1 } },
+
+    {
+      $lookup: {
+        from: "playercharactersettings", // ✅ collection name (see note below)
+        localField: "_id",
+        foreignField: "owner",
+        as: "setting"
+      }
+    },
+
+    // setting is array; keep first or null
+    { $unwind: { path: "$setting", preserveNullAndEmptyArrays: true } },
+
+    {
+      $project: {
+        username: 1,
+        ownerId: "$_id",
+        hairstyle: { $ifNull: ["$setting.hairstyle", 0] },
+        haircolor: { $ifNull: ["$setting.haircolor", 0] },
+        clothingcolor: { $ifNull: ["$setting.clothingcolor", 0] },
+        skincolor: { $ifNull: ["$setting.skincolor", 0] }
+      }
+    }
+  ]);
+
+  // rows are not guaranteed to be in the same order as usernames
+  const byUsername = new Map(rows.map(r => [r.username, r]));
+
+  return usernames.map(username => {
+    const r = byUsername.get(username);
+    return r ?? {
+      username,
+      ownerId: null,
+      hairstyle: 0,
+      haircolor: 0,
+      clothingcolor: 0,
+      skincolor: 0
+    };
+  });
+}
+
 
 //  FOR LINUX
-function launchGameServer(match) {
+async function launchGameServer(match) {
   const logPath = `/ROF/logs/${match.roomName}.log`;
+
+  const playerdata = await buildCharacterSettingsPayload(match)
+
+  console.log(JSON.stringify(playerdata))
 
   const args = [
     "-a",
@@ -74,7 +131,8 @@ function launchGameServer(match) {
     "-roomname", match.roomName,
     "-totalplayers", match.players.length,
     "-totalai", match.ai,
-    "-playernames", JSON.stringify(match.players)
+    "-playernames", JSON.stringify(match.players),
+    "-playercostumedata", JSON.stringify(playerdata)
   ];
 
   const child = spawn("xvfb-run", args, {
@@ -114,9 +172,13 @@ function launchGameServer(match) {
 
 //  FOR WINDOWS
 
-function launchGameWindowsServer(match) {
+async function launchGameWindowsServer(match) {
   const logPath = path.join("C:", "ROF", "logs", `${match.roomName}.log`);
   const exePath = path.join("C:", "ROF", "Rise of Fearless.exe");
+
+  const playerdata = await buildCharacterSettingsPayload(match)
+
+  console.log(JSON.stringify(playerdata))
 
   const args = [
     // "-batchmode",
@@ -128,7 +190,8 @@ function launchGameWindowsServer(match) {
     "-roomname", match.roomName,
     "-totalplayers", match.players.length,
     "-totalai", match.ai,
-    "-playernames", JSON.stringify(match.players)
+    "-playernames", JSON.stringify(match.players),
+    "-playercostumedata", JSON.stringify(playerdata)
   ];
 
   // ⚡ for production (hidden background)
@@ -211,7 +274,7 @@ const findmatchreceive = async (io, socket) => {
                 playersocket: [],
                 maxPlayers: 30,
                 countdownStarted: false,
-                countdown: 10,
+                countdown: 180,
                 interval: null,
                 ai: 0,
                 serversocket: socket
@@ -289,7 +352,7 @@ function HandleFindMatchReceiveOnServerHealthy (io, socket, data) {
           playersocket: [],
           maxPlayers: 30,
           countdownStarted: false,
-          countdown: 10,
+          countdown: 180,
           interval: null
       };
 
@@ -320,9 +383,9 @@ function HandleFindMatchReceiveOnServerHealthy (io, socket, data) {
 function startLobbyCountdown(match, io) {
     match.countdownStarted = true;
 
-    let timeLeft = 10;
+    let timeLeft = 180;
 
-    match.countdown = 10;
+    match.countdown = 180;
 
     match.interval = setInterval(() => {
         timeLeft--;

@@ -16,6 +16,16 @@ const corsConfig = {
     credentials: true, // Allowed Headers to be received
 };
 
+mongoose
+  .connect(process.env.DATABASE_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => {
+    console.log("MongoDB Connected");
+  })
+  .catch((err) => console.log(err));
+
 app.use(cors(corsConfig));
 const server = http.createServer(app);
 
