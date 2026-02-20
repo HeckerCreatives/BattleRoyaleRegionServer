@@ -94,6 +94,8 @@ exports.eventconnection = (io, socket) => {
                 matches.splice(index, 1);
                 console.log(`🗑️ Room ${roomname} removed (empty)`);
             }
+
+            clearInterval(match.interval)
             return;
         }
 

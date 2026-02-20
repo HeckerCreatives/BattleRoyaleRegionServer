@@ -274,7 +274,7 @@ const findmatchreceive = async (io, socket) => {
                 playersocket: [],
                 maxPlayers: 30,
                 countdownStarted: false,
-                countdown: 180,
+                countdown: 10,
                 interval: null,
                 ai: 0,
                 serversocket: socket
@@ -352,7 +352,7 @@ function HandleFindMatchReceiveOnServerHealthy (io, socket, data) {
           playersocket: [],
           maxPlayers: 30,
           countdownStarted: false,
-          countdown: 180,
+          countdown: 10,
           interval: null
       };
 
@@ -383,9 +383,9 @@ function HandleFindMatchReceiveOnServerHealthy (io, socket, data) {
 function startLobbyCountdown(match, io) {
     match.countdownStarted = true;
 
-    let timeLeft = 180;
+    let timeLeft = 10;
 
-    match.countdown = 180;
+    match.countdown = 10;
 
     match.interval = setInterval(() => {
         timeLeft--;
