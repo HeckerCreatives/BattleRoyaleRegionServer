@@ -496,6 +496,11 @@ const serverremovereconnectplayer = async (io, socket) => {
 
     const match = matches.find(m => m.players.includes(username));
 
+    if (!match){
+      console.log(`🗑️ No remove reconnect because no match found`);
+      return;
+    }
+
     const index = match.players.indexOf(username);
 
     if (index === -1) {
