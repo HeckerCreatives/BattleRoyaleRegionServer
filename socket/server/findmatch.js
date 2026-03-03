@@ -15,7 +15,7 @@ const QUEUE_BATCH_SIZE = 2;
 
 // resource assumptions
 const RAM_PER_SESSION_MB = 500;
-const MAX_CPU_LOAD = 0.85;
+const MAX_CPU_LOAD = 0.95;
 
 function isServerHealthy() {
     const freeRAM = os.freemem() / 1024 / 1024;
@@ -52,6 +52,9 @@ setInterval(() => {
   console.log("CHECK SERVER QUEUE")
   processMatchQueue();
 }, 5000); // 2–5 seconds is perfect
+
+const offers = new Map(); // offerId -> { roomName, players, socketIds, expiresAt, accepted:Set, acked:Set }
+const OFFER_TTL_MS = 15000;
 
 //  #region SERVER APP CREATION
 
@@ -110,8 +113,9 @@ async function buildCharacterSettingsPayload(match) {
   });
 }
 
+//  #endregion
 
-//  FOR LINUX
+// #region FOR LINUX
 async function launchGameServer(match) {
   const logPath = `/ROF/logs/${match.roomName}.log`;
 
@@ -170,7 +174,7 @@ async function launchGameServer(match) {
 
 //  #endregion
 
-//  FOR WINDOWS
+// #region FOR WINDOWS
 
 async function launchGameWindowsServer(match) {
   const logPath = path.join("C:", "ROF", "logs", `${match.roomName}.log`);
@@ -441,7 +445,8 @@ const needtoreconnect = async (io, socket) => {
           playerSocket: match.playersocket,
           maxPlayers: match.maxPlayers,
           status: match.status,
-          countdown: match.countdown
+          countdown: match.countdown,
+          playerneedtorecon: socketid
         });
       }
       else{
