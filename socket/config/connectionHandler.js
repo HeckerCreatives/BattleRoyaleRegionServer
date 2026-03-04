@@ -66,48 +66,97 @@ exports.eventconnection = (io, socket) => {
         }
     });
 
-    socket.on("quitonmatch", data => {
-        const username = data.username;
-        const roomname = data.roomname;
-        const socketid = data.socketid;
+    socket.on("quitonmatch", (data) => {
+        try {
+            const username = data?.username;
+            const roomname = data?.roomname;
+            const socketid = data?.socketid;
 
-        console.log(`User ${username} socket ${socketid} quit on match room ${roomname}.`);
+            console.log(`User ${username} socket ${socketid} quit on match room ${roomname}.`);
 
-        const match = matches.find(m => m.roomName === roomname);
-
-        if (!match) {
-            console.warn(`⚠️ Match not found: ${roomname}`);
-            return;
-        }
-
-        // remove player
-        const playerIndex = match.players.indexOf(username);
-        if (playerIndex !== -1) {
-            match.players.splice(playerIndex, 1);
-            match.playersocket.splice(playerIndex, 1);
-        }
-
-        // if room is empty → remove it
-        if (match.players.length === 0) {
-            const index = matches.findIndex(m => m.roomName === roomname);
-            if (index !== -1) {
-                matches.splice(index, 1);
-                console.log(`🗑️ Room ${roomname} removed (empty)`);
+            if (!roomname) {
+                console.warn("⚠️ quitonmatch missing roomname");
+                return;
             }
 
-            clearInterval(match.interval)
-            return;
-        }
+            const matchIndex = matches.findIndex(m => m.roomName === roomname);
+            if (matchIndex === -1) {
+                console.warn(`⚠️ Match not found: ${roomname}`);
+                // still clean activeMatches if it exists (prevents health leak)
+                if (activeMatches?.[roomname]) {
+                    delete activeMatches[roomname];
+                    console.log(`🧹 activeMatches cleared (match missing): ${roomname}`);
+                }
+                return;
+            }
 
-        // send updated room state
-        socket.emit("waitingroomupdate", {
-            roomName: match.roomName,
-            players: match.players,
-            playerSocket: match.playersocket,
-            maxPlayers: match.maxPlayers,
-            status: match.status,
-            countdown: match.countdown
-        });
+            const match = matches[matchIndex];
+
+            // --- Remove player safely (prefer socketid to keep arrays aligned) ---
+            let removed = false;
+
+            if (socketid) {
+                const sIndex = match.playersocket.indexOf(socketid);
+                if (sIndex !== -1) {
+                    match.playersocket.splice(sIndex, 1);
+                    match.players.splice(sIndex, 1); // paired username at same index
+                    removed = true;
+                }
+            }
+
+            // Fallback: remove by username if socketid not found
+            if (!removed && username) {
+                const pIndex = match.players.indexOf(username);
+                if (pIndex !== -1) {
+                    match.players.splice(pIndex, 1);
+                    match.playersocket.splice(pIndex, 1);
+                    removed = true;
+                }
+            }
+
+            if (!removed) {
+                console.warn(`⚠️ Player not found in room ${roomname}. username=${username} socketid=${socketid}`);
+                // Still continue: room might be empty already or desynced; we’ll evaluate below.
+            }
+
+            // --- If room is empty -> cleanup EVERYTHING ---
+            if (!match.players || match.players.length === 0) {
+            // stop countdown / tickers first
+            if (match.interval) {
+                clearInterval(match.interval);
+                match.interval = null;
+            }
+
+            // remove from matches
+            matches.splice(matchIndex, 1);
+            console.log(`🗑️ Room ${roomname} removed (empty)`);
+
+            // ✅ remove from activeMatches (what your health check reads)
+            if (activeMatches?.[roomname]) {
+                delete activeMatches[roomname];
+                console.log(`🧹 activeMatches cleared: ${roomname}`);
+            }
+
+                // Optional: tell any listeners the room is closed (server1/clients)
+                // socket.to(roomname).emit("roomclosed", { roomName: roomname });
+
+                return;
+            }
+
+            // --- Not empty: broadcast updated room state to remaining players ---
+            const payload = {
+                roomName: match.roomName,
+                players: match.players,
+                playerSocket: match.playersocket,
+                maxPlayers: match.maxPlayers,
+                status: match.status,
+                countdown: match.countdown
+            };
+
+            socket.emit("waitingroomupdate", payload);
+        } catch (err) {
+            console.error("❌ quitonmatch error:", err);
+        }
     });
 
     //  #endregion
