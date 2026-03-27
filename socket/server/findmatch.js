@@ -8,6 +8,7 @@ const os = require("os");
 
 const Users = require("../../models/Users");
 const PlayerCharacterSetting = require("../../models/Playercharactersettings");
+const { time } = require("console");
 
 const matchQueue = [];
 const MAX_QUEUE_SIZE = 400;
@@ -27,24 +28,17 @@ function isServerHealthy() {
 }
 
 function processMatchQueue() {
-    if (!isServerHealthy()) {
-      console.log("SERVER NOT HEALTHY")
-      return;
-    }
     if (matchQueue.length === 0) return;
 
     const batch = matchQueue.splice(0, QUEUE_BATCH_SIZE);
 
     for (const queued of batch) {
-      console.log(`process queue and re emit by ${queued.username}  ${queued.socketid}`)
-      HandleFindMatchReceiveOnServerHealthy(queued.io, queued.socket, {
-          username: queued.username,
-          socketid: queued.socketid
-      })
-      // queued.socket.emit("findmatchreceive", {
-      //     username: queued.username,
-      //     socketid: queued.socketid
-      // });
+        console.log(`PROCESS QUEUE: ${queued.username} ${queued.socketid}`);
+
+        handleFindMatchCore(queued.io, queued.socket, {
+            username: queued.username,
+            socketid: queued.socketid
+        });
     }
 }
 
@@ -131,7 +125,7 @@ async function launchGameServer(match) {
     "-logfile", logPath,
     "-region", process.env.SERVER_REGION,
     "-server", "yes",
-    "-mapname", "PrototypeMultiplayer",
+    "-mapname", "Ethiopia",
     "-roomname", match.roomName,
     "-totalplayers", match.players.length,
     "-totalai", match.ai,
@@ -190,7 +184,7 @@ async function launchGameWindowsServer(match) {
     "-logfile", logPath,
     "-region", process.env.SERVER_REGION,
     "-server", "yes",
-    "-mapname", "PrototypeMultiplayer",
+    "-mapname", "Ethiopia",
     "-roomname", match.roomName,
     "-totalplayers", match.players.length,
     "-totalai", match.ai,
@@ -234,167 +228,139 @@ async function launchGameWindowsServer(match) {
 
 //  #endregion
 
+//  #region FIND MATCH CORE
+
+function getAvailableWaitingMatch() {
+    return matches.find(m =>
+        m.status === "WAITING" &&
+        m.players.length < m.maxPlayers
+    );
+}
+
+function addPlayerToMatch(match, username, socketid, socket, io) {
+    // prevent duplicate inside same room
+    if (match.playersocket.includes(socketid) || match.players.includes(username)) {
+        return;
+    }
+
+    match.players.push(username);
+    match.playersocket.push(socketid);
+
+    console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`);
+
+    socket.emit("waitingroomupdate", {
+        roomName: match.roomName,
+        players: match.players,
+        playerSocket: match.playersocket,
+        maxPlayers: match.maxPlayers,
+        status: match.status,
+        countdown: match.countdown
+    });
+
+    if (match.players.length >= 1 && !match.countdownStarted) {
+        startLobbyCountdown(match, io);
+    }
+}
+
+function handleFindMatchCore(io, socket, data) {
+    const userdata = data;
+    const username = userdata.username;
+    const socketid = userdata.socketid;
+
+    // prevent duplicate queue entry
+    if (matchQueue.some(q => q.username === username || q.socketid === socketid)) {
+        console.log(`preventing dual entry for ${username}`)
+        return;
+    }
+
+    // prevent duplicate join in existing matches
+    const alreadyInMatch = matches.some(m =>
+        m.playersocket.includes(socketid) || m.players.includes(username)
+    );
+
+    if (alreadyInMatch) {
+        console.log(`already in match ${username}`)
+        return;
+    }
+
+    // FIRST: try to join an existing waiting room
+    let match = getAvailableWaitingMatch();
+
+    if (match) {
+        console.log(`JOINING EXISTING ROOM EVEN IF SERVER UNHEALTHY: ${match.roomName}`);
+        addPlayerToMatch(match, username, socketid, socket, io);
+        return;
+    }
+
+    // SECOND: only check health if we need to create a new room
+    if (!isServerHealthy()) {
+        console.log("SERVER NOT HEALTHY AND NO AVAILABLE ROOM");
+
+        if (matchQueue.length >= MAX_QUEUE_SIZE) {
+            return;
+        }
+
+        matchQueue.push({ username, socketid, socket, io });
+        return;
+    }
+
+    // THIRD: create a new room because none exists and server is healthy
+    const roomName = generateRoomName();
+
+    match = {
+        roomName,
+        status: "WAITING",
+        players: [],
+        playersocket: [],
+        maxPlayers: 30,
+        countdownStarted: false,
+        countdown: 90,
+        interval: null,
+        ai: 0,
+        serversocket: socket
+    };
+
+    activeMatches[roomName] = {};
+    matches.push(match);
+
+    console.log(`CREATED NEW ROOM: ${roomName}`);
+
+    addPlayerToMatch(match, username, socketid, socket, io);
+}
+
+// #endregion
+
 //  #region SOCKET
 
 const findmatchreceive = async (io, socket) => {
     socket.on("findmatchreceive", async (data) => {
-
-        const userdata = data
-        const username = userdata.username
-        const socketid = userdata.socketid
-
-        // prevent duplicate queue
-        if (matchQueue.some(q => q.username === username)) {
-          return;
-        }
-
-        // server overloaded → queue
-        if (!isServerHealthy()) {
-
-          console.log("SERVER NOT HEALTHY ON FIND MATCH RECEIVE")
-
-          if (matchQueue.length >= MAX_QUEUE_SIZE) {
-              return;
-          }
-
-          matchQueue.push({ username, socketid, socket, io });
-          return;
-        }
-        
-        console.log(`Find match receive data: ${data}`)
-
-        let match = matches.find(m =>
-            m.status === "WAITING" &&
-            m.players.length < m.maxPlayers
-        );
-
-        if (!match) {
-            const roomName = generateRoomName();
-
-            match = {
-                roomName,
-                status: "WAITING",
-                players: [],
-                playersocket: [],
-                maxPlayers: 30,
-                countdownStarted: false,
-                countdown: 10,
-                interval: null,
-                ai: 0,
-                serversocket: socket
-            };
-
-            activeMatches[roomName] = {}
-
-            matches.push(match);
-        }
-
-        match.players.push(username);
-        match.playersocket.push(socketid);
-
-        console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`)
-
-        socket.emit("waitingroomupdate", {
-            roomName: match.roomName,
-            players: match.players,
-            playerSocket: match.playersocket,
-            maxPlayers: match.maxPlayers,
-            status: match.status,
-            countdown: match.countdown
-        });
-
-        if ( match.players.length >= 1 && !match.countdownStarted) {
-            startLobbyCountdown(match, io);
-        }
-    })
-}
-
-function HandleFindMatchReceiveOnServerHealthy (io, socket, data) {
-  
-  const userdata = data
-  const username = userdata.username
-  const socketid = userdata.socketid
-
-  // prevent duplicate queue
-  if (matchQueue.some(q => q.username === username)) {
-    return;
-  }
-
-  // server overloaded → queue
-  if (!isServerHealthy()) {
-
-    console.log("SERVER NOT HEALTHY ON FIND MATCH RECEIVE")
-
-    if (matchQueue.length >= MAX_QUEUE_SIZE) {
-        return;
-    }
-
-    matchQueue.push({ username, socketid, socket, io });
-    return;
-  }
-
-  //  CHECK IF THERE'S STILL A QUEUE IF STILL HAVE, THEN QUEUE THE PLAYER
-  if (matchQueue.length > 0) {
-    matchQueue.push({ username, socketid, socket });
-    return;
-  }
-  
-  console.log(`Find match receive data: ${data}`)
-
-  let match = matches.find(m =>
-      m.status === "WAITING" &&
-      m.players.length < m.maxPlayers
-  );
-
-  if (!match) {
-      const roomName = generateRoomName();
-
-      match = {
-          roomName,
-          status: "WAITING",
-          players: [],
-          playersocket: [],
-          maxPlayers: 30,
-          countdownStarted: false,
-          countdown: 10,
-          interval: null
-      };
-
-      activeMatches[roomName] = {}
-
-      matches.push(match);
-  }
-
-  match.players.push(username);
-  match.playersocket.push(socketid);
-
-  console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`)
-
-  socket.emit("waitingroomupdate", {
-      roomName: match.roomName,
-      players: match.players,
-      playerSocket: match.playersocket,
-      maxPlayers: match.maxPlayers,
-      status: match.status,
-      countdown: match.countdown
-  });
-
-  if ( match.players.length >= 1 && !match.countdownStarted) {
-      startLobbyCountdown(match, io);
-  }
+        handleFindMatchCore(io, socket, data);
+    });
 }
 
 function startLobbyCountdown(match, io) {
     match.countdownStarted = true;
 
-    let timeLeft = 10;
+    let timeLeft = 90;
 
-    match.countdown = 10;
+    match.countdown = timeLeft;
 
     match.interval = setInterval(() => {
         timeLeft--;
         match.countdown = timeLeft
+
         if (timeLeft <= 0) {
+
+            if (match.players.length < 2){
+
+              match.countdown = 30
+              timeLeft = 30;
+
+              console.log(`Restarted timer for match: ${match}`)
+
+              return;
+            }
+
             clearInterval(match.interval);
             startPhotonServer(match, io);
         }
@@ -469,11 +435,13 @@ const removereconnect = async (io, socket) => {
 
     if (match == null){
       
-      console.log(`🗑️ Removed player because match is null: ${removedPlayer}, socket: ${removedSocket}`);
+      console.log(`🗑️ Removed player because match is null: ${username}, socket: ${socketid}`);
 
       socket.emit("doneremovereconnect", { socketid });
 
       io.emit("gameremoveplayer", username)
+
+      return;
     }
 
     const index = match.players.indexOf(username);
@@ -496,28 +464,57 @@ const removereconnect = async (io, socket) => {
 
 const serverremovereconnectplayer = async (io, socket) => {
   socket.on("serverremovereconnect", async (data) => {
-    const matchdata = JSON.parse(data);
-    const username = matchdata.username;
+    try {
+      const matchdata = typeof data === "string" ? JSON.parse(data) : data;
+      const username = matchdata.username?.trim();
 
-    const match = matches.find(m => m.players.includes(username));
+      console.log("remove reconnect raw data:", data);
+      console.log("parsed username:", username);
 
-    if (!match){
-      console.log(`🗑️ No remove reconnect because no match found`);
-      return;
+      if (!username) {
+        console.log("🗑️ No remove reconnect because username is missing");
+        return;
+      }
+
+      const match = matches.find(m => Array.isArray(m.players) && m.players.includes(username));
+
+      if (!match) {
+        console.log(`🗑️ No remove reconnect because no match found for ${username}`);
+        return;
+      }
+
+      console.log("match found:", {
+        roomName: match.roomName,
+        players: match.players,
+        playersocket: match.playersocket
+      });
+
+      const index = match.players.indexOf(username);
+
+      if (index === -1) {
+        console.log(`🗑️ No remove reconnect because username not found in players`);
+        return;
+      }
+
+      const removedPlayer = match.players.splice(index, 1)[0];
+
+      let removedSocket = null;
+      if (Array.isArray(match.playersocket) && match.playersocket.length > index) {
+        removedSocket = match.playersocket.splice(index, 1)[0];
+      }
+
+      console.log(`🗑️ Server removed player: ${removedPlayer}`);
+      console.log(`🗑️ Removed socket: ${removedSocket}`);
+      console.log("updated match:", {
+        roomName: match.roomName,
+        players: match.players,
+        playersocket: match.playersocket
+      });
+    } catch (error) {
+      console.log("🗑️ Error in serverremovereconnect:", error);
     }
-
-    const index = match.players.indexOf(username);
-
-    if (index === -1) {
-      console.log(`🗑️ No remove reconnect`);
-      return;
-    }
-    
-    const removedPlayer = match.players.splice(index, 1)[0];
-
-    console.log(`🗑️ Server removed player: ${removedPlayer}`);
-  })
-}
+  });
+};
 
 const doneroom = async (io, socket) => {
   socket.on("doneroom", async (data) => {
