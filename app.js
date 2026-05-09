@@ -32,6 +32,16 @@ const server = http.createServer(app);
 app.use(bodyParser.json({ limit: "50mb" }))
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: false, parameterLimit: 50000 }))
 
+const dgram = require("dgram");
+const serverpinger = dgram.createSocket("udp4");
+
+serverpinger.on("message", (msg, rinfo) => {
+    // DO NOT log anything (console.log slows things)
+    serverpinger.send(msg, rinfo.port, rinfo.address);
+});
+
+serverpinger.bind(5096, "0.0.0.0");
+
 socketserver(server, corsConfig)
 
 const port = process.env.PORT || 5009;  // Dynamic port for deployment

@@ -119,26 +119,28 @@ exports.eventconnection = (io, socket) => {
                 // Still continue: room might be empty already or desynced; we’ll evaluate below.
             }
 
-            // --- If room is empty -> cleanup EVERYTHING ---
-            if (!match.players || match.players.length === 0) {
-            // stop countdown / tickers first
-            if (match.interval) {
-                clearInterval(match.interval);
-                match.interval = null;
-            }
+            // --- If room is empty OR only bots remain -> cleanup EVERYTHING ---
+            const realPlayersLeft = match.players.filter(p => !p.isBot);
+            if (!match.players || match.players.length === 0 || realPlayersLeft.length === 0) {
+                // stop countdown / tickers first
+                if (match.interval) {
+                    clearInterval(match.interval);
+                    match.interval = null;
+                }
+                if (match.botInterval) {
+                    clearTimeout(match.botInterval);
+                    match.botInterval = null;
+                }
 
-            // remove from matches
-            matches.splice(matchIndex, 1);
-            console.log(`🗑️ Room ${roomname} removed (empty)`);
+                // remove from matches
+                matches.splice(matchIndex, 1);
+                console.log(`🗑️ Room ${roomname} removed (no real players left)`);
 
-            // ✅ remove from activeMatches (what your health check reads)
-            if (activeMatches?.[roomname]) {
-                delete activeMatches[roomname];
-                console.log(`🧹 activeMatches cleared: ${roomname}`);
-            }
-
-                // Optional: tell any listeners the room is closed (server1/clients)
-                // socket.to(roomname).emit("roomclosed", { roomName: roomname });
+                // remove from activeMatches (what your health check reads)
+                if (activeMatches?.[roomname]) {
+                    delete activeMatches[roomname];
+                    console.log(`🧹 activeMatches cleared: ${roomname}`);
+                }
 
                 return;
             }

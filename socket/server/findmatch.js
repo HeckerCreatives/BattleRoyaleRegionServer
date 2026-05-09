@@ -14,6 +14,23 @@ const matchQueue = [];
 const MAX_QUEUE_SIZE = 400;
 const QUEUE_BATCH_SIZE = 2;
 
+const BOT_SPAWN_AVATARS    = ["AVATAR1", "AVATAR2", "AVATAR3", "AVATAR4", "AVATAR5"];
+const BOT_NAMES = [
+    "Concierge", "Ganielle", "YatoGummy", "BonkMeHerta", "CurtainCall",
+    "DKitaItemsSaLapag", "Yahi Cakes", "BlackPeach", "PDaveFile", "Yakeru",
+    "Preaks", "Kaius", "Shirkish", "Shuyanii", "Claymist",
+    "BoomBoomYehey", "Kelboogle", "HebePogi", "ZoeZoe", "CrazyChixx",
+    "belleDOTexe", "Joshtr", "Darx", "Daryll", "kidneyfeliz",
+    "PixelPioneer9T3", "NebulaVoyager42", "enviousdominant", "thievescounty",
+    "focusedskein", "modifiedtophat", "JoeMama", "SpicyEnemy"
+];
+const BOT_HAIRSTYLES       = [0, 1, 2, 3, 4];
+const BOT_HAIRCOLORS       = [0, 1, 2, 3, 4];
+const BOT_CLOTHINGCOLORS   = [0, 1, 2, 3, 4];
+const BOT_SKINCOLORS       = [0, 1, 2, 3, 4];
+
+function randFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
 // resource assumptions
 const RAM_PER_SESSION_MB = 500;
 const MAX_CPU_LOAD = 0.95;
@@ -37,7 +54,8 @@ function processMatchQueue() {
 
         handleFindMatchCore(queued.io, queued.socket, {
             username: queued.username,
-            socketid: queued.socketid
+            socketid: queued.socketid,
+            avatarid: queued.avatarid  // ✅ add this
         });
     }
 }
@@ -58,27 +76,21 @@ function generateRoomName() {
 }
 
 async function buildCharacterSettingsPayload(match) {
-  const usernames = match.players;
+  const players = match.players; // [{ username, avatarid }]
+  const usernames = players.map(p => p.username); // ✅ ["STRONGWARRIOR12"]
 
-  // Users -> lookup PlayerCharacterSettings via owner
   const rows = await Users.aggregate([
-    { $match: { username: { $in: usernames } } },
-
-    // only keep what we need
+    { $match: { username: { $in: usernames } } }, // ✅ now matches correctly
     { $project: { username: 1 } },
-
     {
       $lookup: {
-        from: "playercharactersettings", // ✅ collection name (see note below)
+        from: "playercharactersettings",
         localField: "_id",
         foreignField: "owner",
         as: "setting"
       }
     },
-
-    // setting is array; keep first or null
     { $unwind: { path: "$setting", preserveNullAndEmptyArrays: true } },
-
     {
       $project: {
         username: 1,
@@ -91,18 +103,21 @@ async function buildCharacterSettingsPayload(match) {
     }
   ]);
 
-  // rows are not guaranteed to be in the same order as usernames
   const byUsername = new Map(rows.map(r => [r.username, r]));
 
-  return usernames.map(username => {
-    const r = byUsername.get(username);
-    return r ?? {
-      username,
-      ownerId: null,
-      hairstyle: 0,
-      haircolor: 0,
-      clothingcolor: 0,
-      skincolor: 0
+  // ✅ Map over players to preserve avatarid alongside the DB result
+  return players.map(player => {
+    const r = byUsername.get(player.username);
+    return {
+      ...(r ?? {
+        username: player.username,
+        avatarid: player.avatarid, // ✅ always carry avatarid through
+        ownerId: null,
+        hairstyle: 0,
+        haircolor: 0,
+        clothingcolor: 0,
+        skincolor: 0
+      })
     };
   });
 }
@@ -113,7 +128,19 @@ async function buildCharacterSettingsPayload(match) {
 async function launchGameServer(match) {
   const logPath = `/ROF/logs/${match.roomName}.log`;
 
-  const playerdata = await buildCharacterSettingsPayload(match)
+  const realPlayers = match.players.filter(p => !p.isBot);
+  const botPlayers  = match.players.filter(p => p.isBot);
+
+  const playerdata = await buildCharacterSettingsPayload({ ...match, players: realPlayers });
+
+  const botcostumedata = botPlayers.map(bot => ({
+    username:      bot.username,
+    avatarid:      bot.avatarid,
+    hairstyle:     randFrom(BOT_HAIRSTYLES),
+    haircolor:     randFrom(BOT_HAIRCOLORS),
+    clothingcolor: randFrom(BOT_CLOTHINGCOLORS),
+    skincolor:     randFrom(BOT_SKINCOLORS)
+  }));
 
   console.log(JSON.stringify(playerdata))
 
@@ -127,10 +154,11 @@ async function launchGameServer(match) {
     "-server", "yes",
     "-mapname", "Ethiopia",
     "-roomname", match.roomName,
-    "-totalplayers", match.players.length,
+    "-totalplayers", realPlayers.length,
     "-totalai", match.ai,
-    "-playernames", JSON.stringify(match.players),
-    "-playercostumedata", JSON.stringify(playerdata)
+    "-playernames", JSON.stringify(realPlayers.map(p => p.username)),
+    "-playercostumedata", JSON.stringify(playerdata),
+    "-botcostumedata", JSON.stringify(botcostumedata)
   ];
 
   const child = spawn("xvfb-run", args, {
@@ -174,7 +202,19 @@ async function launchGameWindowsServer(match) {
   const logPath = path.join("C:", "ROF", "logs", `${match.roomName}.log`);
   const exePath = path.join("C:", "ROF", "Rise of Fearless.exe");
 
-  const playerdata = await buildCharacterSettingsPayload(match)
+  const realPlayers = match.players.filter(p => !p.isBot);
+  const botPlayers  = match.players.filter(p => p.isBot);
+
+  const playerdata = await buildCharacterSettingsPayload({ ...match, players: realPlayers });
+
+  const botcostumedata = botPlayers.map(bot => ({
+    username:      bot.username,
+    avatarid:      bot.avatarid,
+    hairstyle:     randFrom(BOT_HAIRSTYLES),
+    haircolor:     randFrom(BOT_HAIRCOLORS),
+    clothingcolor: randFrom(BOT_CLOTHINGCOLORS),
+    skincolor:     randFrom(BOT_SKINCOLORS)
+  }));
 
   console.log(JSON.stringify(playerdata))
 
@@ -186,10 +226,11 @@ async function launchGameWindowsServer(match) {
     "-server", "yes",
     "-mapname", "Ethiopia",
     "-roomname", match.roomName,
-    "-totalplayers", match.players.length,
+    "-totalplayers", realPlayers.length,
     "-totalai", match.ai,
-    "-playernames", JSON.stringify(match.players),
-    "-playercostumedata", JSON.stringify(playerdata)
+    "-playernames", JSON.stringify(realPlayers.map(p => p.username)),
+    "-playercostumedata", JSON.stringify(playerdata),
+    "-botcostumedata", JSON.stringify(botcostumedata)
   ];
 
   // ⚡ for production (hidden background)
@@ -233,17 +274,52 @@ async function launchGameWindowsServer(match) {
 function getAvailableWaitingMatch() {
     return matches.find(m =>
         m.status === "WAITING" &&
-        m.players.length < m.maxPlayers
+        (m.players.length < m.maxPlayers || m.players.some(p => p.isBot))
     );
 }
 
-function addPlayerToMatch(match, username, socketid, socket, io) {
-    // prevent duplicate inside same room
-    if (match.playersocket.includes(socketid) || match.players.includes(username)) {
+function addPlayerToMatch(match, username, avatarid, socketid, socket, io) {
+    // prevent duplicate inside same room (only real-player duplicates)
+    if (
+        match.playersocket.includes(socketid) ||
+        match.players.some(p => !p.isBot && p.username === username)
+    ) {
         return;
     }
 
-    match.players.push(username);
+    // If a bot has the same username, convert that slot into a real player slot.
+    // This avoids false "already in room" rejections when bot names collide with player names.
+    const sameNameBotIndex = match.players.findIndex(p => p.isBot && p.username === username);
+    if (sameNameBotIndex !== -1) {
+        match.players[sameNameBotIndex] = { username, avatarid };
+        match.playersocket[sameNameBotIndex] = socketid;
+        if (match.ai > 0) match.ai--;
+
+        socket.emit("waitingroomupdate", {
+            roomName: match.roomName,
+            players: match.players,
+            playerSocket: match.playersocket,
+            maxPlayers: match.maxPlayers,
+            status: match.status,
+            countdown: match.countdown
+        });
+        return;
+    }
+
+    // Room is full — displace the last bot to make room for this real player
+    if (match.players.length >= match.maxPlayers) {
+        const lastBotIndex = match.players.reduce((found, p, i) => p.isBot ? i : found, -1);
+        if (lastBotIndex === -1) return; // full with real players only
+        match.players.splice(lastBotIndex, 1);
+        match.playersocket.splice(lastBotIndex, 1);
+        match.ai--;
+        console.log(`Displaced a bot to make room for ${username} in ${match.roomName}`);
+    }
+
+    match.players.push({
+      username: username,
+      avatarid: avatarid
+    });
     match.playersocket.push(socketid);
 
     console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`);
@@ -259,12 +335,14 @@ function addPlayerToMatch(match, username, socketid, socket, io) {
 
     if (match.players.length >= 1 && !match.countdownStarted) {
         startLobbyCountdown(match, io);
+        startBotSpawning(match, io);
     }
 }
 
 function handleFindMatchCore(io, socket, data) {
     const userdata = data;
     const username = userdata.username;
+    const avatarid = userdata.avatarid;
     const socketid = userdata.socketid;
 
     // prevent duplicate queue entry
@@ -275,7 +353,8 @@ function handleFindMatchCore(io, socket, data) {
 
     // prevent duplicate join in existing matches
     const alreadyInMatch = matches.some(m =>
-        m.playersocket.includes(socketid) || m.players.includes(username)
+        m.playersocket.includes(socketid) || 
+        m.players.some(p => !p.isBot && p.username === username)  // ✅ only real-player collisions
     );
 
     if (alreadyInMatch) {
@@ -288,7 +367,7 @@ function handleFindMatchCore(io, socket, data) {
 
     if (match) {
         console.log(`JOINING EXISTING ROOM EVEN IF SERVER UNHEALTHY: ${match.roomName}`);
-        addPlayerToMatch(match, username, socketid, socket, io);
+        addPlayerToMatch(match, username, avatarid, socketid, socket, io);
         return;
     }
 
@@ -300,7 +379,7 @@ function handleFindMatchCore(io, socket, data) {
             return;
         }
 
-        matchQueue.push({ username, socketid, socket, io });
+        matchQueue.push({ username, avatarid, socketid, socket, io }); // ✅ add avatarid
         return;
     }
 
@@ -314,9 +393,11 @@ function handleFindMatchCore(io, socket, data) {
         playersocket: [],
         maxPlayers: 30,
         countdownStarted: false,
-        countdown: 90,
+        countdown: 180,
         interval: null,
+        botInterval: null,
         ai: 0,
+        usedBotNames: new Set(),
         serversocket: socket
     };
 
@@ -325,7 +406,7 @@ function handleFindMatchCore(io, socket, data) {
 
     console.log(`CREATED NEW ROOM: ${roomName}`);
 
-    addPlayerToMatch(match, username, socketid, socket, io);
+    addPlayerToMatch(match, username, avatarid, socketid, socket, io);
 }
 
 // #endregion
@@ -341,13 +422,20 @@ const findmatchreceive = async (io, socket) => {
 function startLobbyCountdown(match, io) {
     match.countdownStarted = true;
 
-    let timeLeft = 90;
+    let timeLeft = match.countdown;
 
     match.countdown = timeLeft;
 
     match.interval = setInterval(() => {
         timeLeft--;
         match.countdown = timeLeft
+
+        // At 15s mark, flush any remaining bot slots instantly
+        if (timeLeft === 15) {
+            clearTimeout(match.botInterval);
+            match.botInterval = null;
+            fillRemainingWithBots(match);
+        }
 
         if (timeLeft <= 0) {
 
@@ -362,9 +450,101 @@ function startLobbyCountdown(match, io) {
             }
 
             clearInterval(match.interval);
+            clearTimeout(match.botInterval);
+            match.botInterval = null;
             startPhotonServer(match, io);
         }
     }, 1000);
+}
+
+function fillRemainingWithBots(match) {
+    while (match.players.length < match.maxPlayers) {
+        const availableNames = BOT_NAMES.filter(n => !match.usedBotNames.has(n));
+        const botName = availableNames.length > 0
+            ? randFrom(availableNames)
+            : `BOT_${generatedname()}`;
+        match.usedBotNames.add(botName);
+
+        match.players.push({
+            username: botName,
+            avatarid: randFrom(BOT_SPAWN_AVATARS),
+            isBot: true
+        });
+        match.playersocket.push(`BOT_SOCKET_${generatedname()}`);
+        match.ai++;
+
+        console.log(`Bot ${botName} filled remaining slot in ${match.roomName} (total: ${match.players.length}/${match.maxPlayers})`);
+    }
+
+    match.serversocket.emit("waitingroomupdate", {
+        roomName: match.roomName,
+        players: match.players,
+        playerSocket: match.playersocket,
+        maxPlayers: match.maxPlayers,
+        status: match.status,
+        countdown: match.countdown
+    });
+}
+
+function startBotSpawning(match, io) {
+    if (match.botInterval) return;
+
+    // Bots finish joining before the 15s buffer — spread across the available window
+    const STOP_AT_SECONDS = 15;
+    const windowMs = (match.countdown - STOP_AT_SECONDS) * 1000; // 45 000 ms
+    const baseIntervalMs = windowMs / (match.maxPlayers - 1);    // ~1 552 ms
+
+    const scheduleNext = () => {
+        // Randomize ±50 % around the base so joins feel organic
+        const delay = baseIntervalMs * (0.5 + Math.random());
+        match.botInterval = setTimeout(spawnBot, delay);
+    };
+
+    const spawnBot = () => {
+        if (
+            match.status !== "WAITING" ||
+            match.players.length >= match.maxPlayers ||
+            match.countdown <= STOP_AT_SECONDS
+        ) {
+            match.botInterval = null;
+            return;
+        }
+
+        const availableNames = BOT_NAMES.filter(n => !match.usedBotNames.has(n));
+        const botName = availableNames.length > 0
+            ? randFrom(availableNames)
+            : `BOT_${generatedname()}`;
+        match.usedBotNames.add(botName);
+
+        const bot = {
+            username: botName,
+            avatarid: randFrom(BOT_SPAWN_AVATARS),
+            isBot: true
+        };
+
+        match.players.push(bot);
+        match.playersocket.push(`BOT_SOCKET_${generatedname()}`);
+        match.ai++;
+
+        console.log(`Bot ${bot.username} joined room ${match.roomName} (total: ${match.players.length}/${match.maxPlayers})`);
+
+        match.serversocket.emit("waitingroomupdate", {
+            roomName: match.roomName,
+            players: match.players,
+            playerSocket: match.playersocket,
+            maxPlayers: match.maxPlayers,
+            status: match.status,
+            countdown: match.countdown
+        });
+
+        if (match.players.length < match.maxPlayers) {
+            scheduleNext();
+        } else {
+            match.botInterval = null;
+        }
+    };
+
+    scheduleNext();
 }
 
 function startPhotonServer(match, io) {
@@ -393,10 +573,10 @@ const needtoreconnect = async (io, socket) => {
     const { username, socketid } = data;
     console.log(`Reconnect request from: ${username} (${socketid})`);
 
-    const match = matches.find(m => m.players.includes(username));
+    const match = matches.find(m => m.players.some(player => player.username == username));
 
     if (match){
-      const index = match.players.indexOf(username);
+      const index = match.players.findIndex(player => player.username == username);
 
       if (index !== -1){
         const oldSocket = match.playersocket[index];
@@ -421,8 +601,8 @@ const needtoreconnect = async (io, socket) => {
       }
     }
     else{
-        console.log(`⚠️ No active match found for ${username}`);
-        socket.emit("reconnectfail", { socketid });
+      console.log(`⚠️ No active match found for ${username}`);
+      socket.emit("reconnectfail", { socketid });
     }
   })
 }
@@ -431,7 +611,7 @@ const removereconnect = async (io, socket) => {
   socket.on("removereconnect", async (data) => {
     const { username, socketid } = data;
 
-    const match = matches.find(m => m.players.includes(username));
+    const match = matches.find(m => m.players.some(player => player.username == username));
 
     if (match == null){
       
@@ -444,7 +624,7 @@ const removereconnect = async (io, socket) => {
       return;
     }
 
-    const index = match.players.indexOf(username);
+    const index = match.players.findIndex(player => player.username == username);
 
     if (index === -1) {
       console.log(`🗑️ No remove reconnect`);
@@ -454,7 +634,7 @@ const removereconnect = async (io, socket) => {
     const removedPlayer = match.players.splice(index, 1)[0];
     const removedSocket = match.playersocket.splice(index, 1)[0];
 
-    console.log(`🗑️ Removed player: ${removedPlayer}, socket: ${removedSocket}`);
+    console.log(`🗑️ Removed player: ${removedPlayer.username}, socket: ${removedSocket}`);
 
     socket.emit("doneremovereconnect", { socketid });
 
@@ -476,7 +656,7 @@ const serverremovereconnectplayer = async (io, socket) => {
         return;
       }
 
-      const match = matches.find(m => Array.isArray(m.players) && m.players.includes(username));
+      const match = matches.find(m => Array.isArray(m.players) && m.players.some(player => player.username == username));
 
       if (!match) {
         console.log(`🗑️ No remove reconnect because no match found for ${username}`);
@@ -489,7 +669,7 @@ const serverremovereconnectplayer = async (io, socket) => {
         playersocket: match.playersocket
       });
 
-      const index = match.players.indexOf(username);
+      const index = match.players.findIndex(player => player.username == username);
 
       if (index === -1) {
         console.log(`🗑️ No remove reconnect because username not found in players`);
@@ -503,7 +683,7 @@ const serverremovereconnectplayer = async (io, socket) => {
         removedSocket = match.playersocket.splice(index, 1)[0];
       }
 
-      console.log(`🗑️ Server removed player: ${removedPlayer}`);
+      console.log(`🗑️ Server removed player: ${removedPlayer.username}`);
       console.log(`🗑️ Removed socket: ${removedSocket}`);
       console.log("updated match:", {
         roomName: match.roomName,
