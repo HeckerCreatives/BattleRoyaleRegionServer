@@ -6,6 +6,11 @@ const generatedname = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 12)
 const path = require("path");
 const os = require("os");
 
+// Bursty per-match/per-event logs. Gate behind SOCKET_DEBUG=1 so prod stays
+// quiet; warnings/errors (console.warn/console.error) are left intact.
+const SOCKET_DEBUG = process.env.SOCKET_DEBUG === "1";
+const dlog = (...a) => { if (SOCKET_DEBUG) console.log(...a); };
+
 const Users = require("../../models/Users");
 const PlayerCharacterSetting = require("../../models/Playercharactersettings");
 const { time } = require("console");
@@ -50,7 +55,7 @@ function processMatchQueue() {
     const batch = matchQueue.splice(0, QUEUE_BATCH_SIZE);
 
     for (const queued of batch) {
-        console.log(`PROCESS QUEUE: ${queued.username} ${queued.socketid}`);
+        dlog(`PROCESS QUEUE: ${queued.username} ${queued.socketid}`);
 
         handleFindMatchCore(queued.io, queued.socket, {
             username: queued.username,
@@ -61,7 +66,7 @@ function processMatchQueue() {
 }
 
 setInterval(() => {
-  console.log("CHECK SERVER QUEUE")
+  dlog("CHECK SERVER QUEUE")
   processMatchQueue();
 }, 5000); // 2–5 seconds is perfect
 
@@ -142,7 +147,7 @@ async function launchGameServer(match) {
     skincolor:     randFrom(BOT_SKINCOLORS)
   }));
 
-  console.log(JSON.stringify(playerdata))
+  dlog(JSON.stringify(playerdata))
 
   const args = [
     "-a",
@@ -176,11 +181,11 @@ async function launchGameServer(match) {
     launchedAt: Date.now()
   };
 
-  console.log(`Launched Fusion server with room: ${match.roomName}`);
+  dlog(`Launched Fusion server with room: ${match.roomName}`);
 
   // 🧼 Cleanup on exit
   child.on("exit", (code, signal) => {
-    console.log(`Server for room "${match.roomName}" exited (code: ${code}, signal: ${signal})`);
+    dlog(`Server for room "${match.roomName}" exited (code: ${code}, signal: ${signal})`);
     delete activeMatches[match.roomName];
     const index = matches.findIndex(m => m.roomName === match.roomName);
     if (index !== -1) matches.splice(index, 1);
@@ -216,7 +221,7 @@ async function launchGameWindowsServer(match) {
     skincolor:     randFrom(BOT_SKINCOLORS)
   }));
 
-  console.log(JSON.stringify(playerdata))
+  dlog(JSON.stringify(playerdata))
 
   const args = [
     // "-batchmode",
@@ -250,10 +255,10 @@ async function launchGameWindowsServer(match) {
     launchedAt: Date.now()
   };
 
-  console.log(`Launched Fusion server with room: ${match.roomName}`);
+  dlog(`Launched Fusion server with room: ${match.roomName}`);
 
   child.on("exit", (code, signal) => {
-    console.log(`Server for room "${match.roomName}" exited (code: ${code}, signal: ${signal})`);
+    dlog(`Server for room "${match.roomName}" exited (code: ${code}, signal: ${signal})`);
     delete activeMatches[match.roomName];
     const index = matches.findIndex(m => m.roomName === match.roomName);
     if (index !== -1) matches.splice(index, 1);
@@ -313,7 +318,7 @@ function addPlayerToMatch(match, username, avatarid, socketid, socket, io) {
         match.players.splice(lastBotIndex, 1);
         match.playersocket.splice(lastBotIndex, 1);
         match.ai--;
-        console.log(`Displaced a bot to make room for ${username} in ${match.roomName}`);
+        dlog(`Displaced a bot to make room for ${username} in ${match.roomName}`);
     }
 
     match.players.push({
@@ -322,7 +327,7 @@ function addPlayerToMatch(match, username, avatarid, socketid, socket, io) {
     });
     match.playersocket.push(socketid);
 
-    console.log(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`);
+    dlog(`MATCH STATUS: ${match.status} ROOM: ${match.roomName}`);
 
     socket.emit("waitingroomupdate", {
         roomName: match.roomName,
@@ -347,7 +352,7 @@ function handleFindMatchCore(io, socket, data) {
 
     // prevent duplicate queue entry
     if (matchQueue.some(q => q.username === username || q.socketid === socketid)) {
-        console.log(`preventing dual entry for ${username}`)
+        dlog(`preventing dual entry for ${username}`)
         return;
     }
 
@@ -358,7 +363,7 @@ function handleFindMatchCore(io, socket, data) {
     );
 
     if (alreadyInMatch) {
-        console.log(`already in match ${username}`)
+        dlog(`already in match ${username}`)
         return;
     }
 
@@ -366,14 +371,14 @@ function handleFindMatchCore(io, socket, data) {
     let match = getAvailableWaitingMatch();
 
     if (match) {
-        console.log(`JOINING EXISTING ROOM EVEN IF SERVER UNHEALTHY: ${match.roomName}`);
+        dlog(`JOINING EXISTING ROOM EVEN IF SERVER UNHEALTHY: ${match.roomName}`);
         addPlayerToMatch(match, username, avatarid, socketid, socket, io);
         return;
     }
 
     // SECOND: only check health if we need to create a new room
     if (!isServerHealthy()) {
-        console.log("SERVER NOT HEALTHY AND NO AVAILABLE ROOM");
+        dlog("SERVER NOT HEALTHY AND NO AVAILABLE ROOM");
 
         if (matchQueue.length >= MAX_QUEUE_SIZE) {
             return;
@@ -393,7 +398,7 @@ function handleFindMatchCore(io, socket, data) {
         playersocket: [],
         maxPlayers: 30,
         countdownStarted: false,
-        countdown: 180,
+        countdown: 75,
         interval: null,
         botInterval: null,
         ai: 0,
@@ -404,7 +409,7 @@ function handleFindMatchCore(io, socket, data) {
     activeMatches[roomName] = {};
     matches.push(match);
 
-    console.log(`CREATED NEW ROOM: ${roomName}`);
+    dlog(`CREATED NEW ROOM: ${roomName}`);
 
     addPlayerToMatch(match, username, avatarid, socketid, socket, io);
 }
@@ -444,7 +449,7 @@ function startLobbyCountdown(match, io) {
               match.countdown = 30
               timeLeft = 30;
 
-              console.log(`Restarted timer for match: ${match}`)
+              dlog(`Restarted timer for match: ${match}`)
 
               return;
             }
@@ -473,7 +478,7 @@ function fillRemainingWithBots(match) {
         match.playersocket.push(`BOT_SOCKET_${generatedname()}`);
         match.ai++;
 
-        console.log(`Bot ${botName} filled remaining slot in ${match.roomName} (total: ${match.players.length}/${match.maxPlayers})`);
+        dlog(`Bot ${botName} filled remaining slot in ${match.roomName} (total: ${match.players.length}/${match.maxPlayers})`);
     }
 
     match.serversocket.emit("waitingroomupdate", {
@@ -526,7 +531,7 @@ function startBotSpawning(match, io) {
         match.playersocket.push(`BOT_SOCKET_${generatedname()}`);
         match.ai++;
 
-        console.log(`Bot ${bot.username} joined room ${match.roomName} (total: ${match.players.length}/${match.maxPlayers})`);
+        dlog(`Bot ${bot.username} joined room ${match.roomName} (total: ${match.players.length}/${match.maxPlayers})`);
 
         match.serversocket.emit("waitingroomupdate", {
             roomName: match.roomName,
@@ -571,7 +576,7 @@ function startPhotonServer(match, io) {
 const needtoreconnect = async (io, socket) => {
   socket.on("needtoreconnect", async (data) => {
     const { username, socketid } = data;
-    console.log(`Reconnect request from: ${username} (${socketid})`);
+    dlog(`Reconnect request from: ${username} (${socketid})`);
 
     const match = matches.find(m => m.players.some(player => player.username == username));
 
@@ -582,7 +587,7 @@ const needtoreconnect = async (io, socket) => {
         const oldSocket = match.playersocket[index];
         match.playersocket[index] = socketid;
 
-        console.log(`✅ Player ${username} reconnected: oldSocket=${oldSocket}, newSocket=${socketid}`);
+        dlog(`✅ Player ${username} reconnected: oldSocket=${oldSocket}, newSocket=${socketid}`);
 
         // Return updated match only to the reconnecting socket
         socket.emit("reconnectexist", {
@@ -596,12 +601,12 @@ const needtoreconnect = async (io, socket) => {
         });
       }
       else{
-        console.log(`⚠️ No active match found for ${username}`);
+        dlog(`⚠️ No active match found for ${username}`);
         socket.emit("reconnectfail", { socketid });
       }
     }
     else{
-      console.log(`⚠️ No active match found for ${username}`);
+      dlog(`⚠️ No active match found for ${username}`);
       socket.emit("reconnectfail", { socketid });
     }
   })
@@ -615,7 +620,7 @@ const removereconnect = async (io, socket) => {
 
     if (match == null){
       
-      console.log(`🗑️ Removed player because match is null: ${username}, socket: ${socketid}`);
+      dlog(`🗑️ Removed player because match is null: ${username}, socket: ${socketid}`);
 
       socket.emit("doneremovereconnect", { socketid });
 
@@ -627,14 +632,14 @@ const removereconnect = async (io, socket) => {
     const index = match.players.findIndex(player => player.username == username);
 
     if (index === -1) {
-      console.log(`🗑️ No remove reconnect`);
+      dlog(`🗑️ No remove reconnect`);
       return;
     }
     
     const removedPlayer = match.players.splice(index, 1)[0];
     const removedSocket = match.playersocket.splice(index, 1)[0];
 
-    console.log(`🗑️ Removed player: ${removedPlayer.username}, socket: ${removedSocket}`);
+    dlog(`🗑️ Removed player: ${removedPlayer.username}, socket: ${removedSocket}`);
 
     socket.emit("doneremovereconnect", { socketid });
 
@@ -648,22 +653,22 @@ const serverremovereconnectplayer = async (io, socket) => {
       const matchdata = typeof data === "string" ? JSON.parse(data) : data;
       const username = matchdata.username?.trim();
 
-      console.log("remove reconnect raw data:", data);
-      console.log("parsed username:", username);
+      dlog("remove reconnect raw data:", data);
+      dlog("parsed username:", username);
 
       if (!username) {
-        console.log("🗑️ No remove reconnect because username is missing");
+        dlog("🗑️ No remove reconnect because username is missing");
         return;
       }
 
       const match = matches.find(m => Array.isArray(m.players) && m.players.some(player => player.username == username));
 
       if (!match) {
-        console.log(`🗑️ No remove reconnect because no match found for ${username}`);
+        dlog(`🗑️ No remove reconnect because no match found for ${username}`);
         return;
       }
 
-      console.log("match found:", {
+      dlog("match found:", {
         roomName: match.roomName,
         players: match.players,
         playersocket: match.playersocket
@@ -672,7 +677,7 @@ const serverremovereconnectplayer = async (io, socket) => {
       const index = match.players.findIndex(player => player.username == username);
 
       if (index === -1) {
-        console.log(`🗑️ No remove reconnect because username not found in players`);
+        dlog(`🗑️ No remove reconnect because username not found in players`);
         return;
       }
 
@@ -683,15 +688,15 @@ const serverremovereconnectplayer = async (io, socket) => {
         removedSocket = match.playersocket.splice(index, 1)[0];
       }
 
-      console.log(`🗑️ Server removed player: ${removedPlayer.username}`);
-      console.log(`🗑️ Removed socket: ${removedSocket}`);
-      console.log("updated match:", {
+      dlog(`🗑️ Server removed player: ${removedPlayer.username}`);
+      dlog(`🗑️ Removed socket: ${removedSocket}`);
+      dlog("updated match:", {
         roomName: match.roomName,
         players: match.players,
         playersocket: match.playersocket
       });
     } catch (error) {
-      console.log("🗑️ Error in serverremovereconnect:", error);
+      dlog("🗑️ Error in serverremovereconnect:", error);
     }
   });
 };
@@ -705,13 +710,13 @@ const doneroom = async (io, socket) => {
     const index = matches.findIndex(m => m.roomName === matchname);
 
     if (index === -1) {
-      console.log(`🗑️ No room found to be done`);
+      dlog(`🗑️ No room found to be done`);
       return;
     }
 
     const removedRoom = matches.splice(index, 1)[0];
 
-    console.log(`🗑️ Server removed room: ${removedRoom.roomName}`);
+    dlog(`🗑️ Server removed room: ${removedRoom.roomName}`);
   });
 };
 
@@ -733,7 +738,7 @@ const changematchstate = async (io, socket) => {
         }
 
         match.status = matchstatus;
-        console.log(`Match "${matchname}" status changed to "${matchstatus}"`);
+        dlog(`Match "${matchname}" status changed to "${matchstatus}"`);
 
         if (matchstatus === "WAITING") {
             notifyplayersformatchstatus(match, io);
@@ -742,8 +747,77 @@ const changematchstate = async (io, socket) => {
 }
 
 const notifyplayersformatchstatus = (match, io) => {
-    console.log(`SENDING MATCH STATUS ${match.status}`)
+    dlog(`SENDING MATCH STATUS ${match.status}`)
     match.serversocket.emit("matchstatuschanged", match);
+}
+
+const cancelfindmatch = async (io, socket) => {
+    socket.on("cancelfindmatch", (data) => {
+        try {
+            const username = data?.username;
+            const socketid = data?.socketid;
+
+            dlog(`Cancel find match: username=${username} socketid=${socketid}`);
+
+            // 1) Drop from the pending matchmaking queue (the common case —
+            //    player cancels while still queued, before any room exists).
+            const qIndex = matchQueue.findIndex(
+                q => (socketid && q.socketid === socketid) || q.username === username
+            );
+            if (qIndex !== -1) {
+                matchQueue.splice(qIndex, 1);
+                dlog(`Removed ${username} from matchQueue (cancel find)`);
+            }
+
+            // 2) Race window: processMatchQueue() runs on a 5s timer and may
+            //    have already placed this player into a WAITING room before the
+            //    cancel arrived. Pull them out so the room stops emitting
+            //    enteringmatch/waitingroomupdate to a player who left.
+            for (let i = matches.length - 1; i >= 0; i--) {
+                const match = matches[i];
+                if (match.status !== "WAITING") continue;
+
+                let removed = false;
+                const sIndex = socketid ? match.playersocket.indexOf(socketid) : -1;
+                if (sIndex !== -1) {
+                    match.players.splice(sIndex, 1);
+                    match.playersocket.splice(sIndex, 1);
+                    removed = true;
+                } else if (username) {
+                    const pIndex = match.players.findIndex(p => !p.isBot && p.username === username);
+                    if (pIndex !== -1) {
+                        match.players.splice(pIndex, 1);
+                        match.playersocket.splice(pIndex, 1);
+                        removed = true;
+                    }
+                }
+                if (!removed) continue;
+
+                dlog(`Removed ${username} from waiting room ${match.roomName} (cancel find)`);
+
+                const realPlayersLeft = match.players.filter(p => !p.isBot);
+                if (realPlayersLeft.length === 0) {
+                    if (match.interval) { clearInterval(match.interval); match.interval = null; }
+                    if (match.botInterval) { clearTimeout(match.botInterval); match.botInterval = null; }
+                    matches.splice(i, 1);
+                    if (activeMatches?.[match.roomName]) delete activeMatches[match.roomName];
+                    dlog(`🗑️ Room ${match.roomName} removed (empty after cancel find)`);
+                } else {
+                    socket.emit("waitingroomupdate", {
+                        roomName: match.roomName,
+                        players: match.players,
+                        playerSocket: match.playersocket,
+                        maxPlayers: match.maxPlayers,
+                        status: match.status,
+                        countdown: match.countdown
+                    });
+                }
+                break; // a player can only be in one room
+            }
+        } catch (err) {
+            console.error("❌ cancelfindmatch error:", err);
+        }
+    });
 }
 
 //  #endregion
@@ -755,5 +829,6 @@ module.exports = {
     needtoreconnect,
     removereconnect,
     serverremovereconnectplayer,
-    doneroom
+    doneroom,
+    cancelfindmatch
 }

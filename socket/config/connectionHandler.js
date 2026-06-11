@@ -1,11 +1,16 @@
 const { activeUsers } = require("./socketstates")
 const { matches, activeMatches } = require("../config/socketstates")
 
-const { findmatchreceive, changematchstate, needtoreconnect, removereconnect, serverremovereconnectplayer, doneroom } = require("../server/findmatch")
+const { findmatchreceive, changematchstate, needtoreconnect, removereconnect, serverremovereconnectplayer, doneroom, cancelfindmatch } = require("../server/findmatch")
 
 const HEARTBEAT_INTERVAL = 5000; // Send ping every 10 seconds
 const TIMEOUT = 10000;            // Wait 10 seconds for pong
 const MAX_MISSED_PINGS = 3;
+
+// Bursty per-event logs. Gate behind SOCKET_DEBUG=1 so prod stays quiet;
+// warnings/errors (console.warn/console.error) are left intact.
+const SOCKET_DEBUG = process.env.SOCKET_DEBUG === "1";
+const dlog = (...a) => { if (SOCKET_DEBUG) console.log(...a); };
 
 exports.eventconnection = (io, socket) => {
     //  #region SOCKET MAIN EVENTS
@@ -14,7 +19,7 @@ exports.eventconnection = (io, socket) => {
 
         const userdata = JSON.parse(data);
 
-        console.log(userdata)
+        dlog(userdata)
 
         const username = userdata.username;
         const region = userdata.region;
@@ -27,7 +32,7 @@ exports.eventconnection = (io, socket) => {
 
         activeUsers.set(username, region);
 
-        console.log(`User ${username} with region ${region} logged in on ${process.env.SERVER_REGION}`);
+        dlog(`User ${username} with region ${region} logged in on ${process.env.SERVER_REGION}`);
 
         socket.emit("sendusercount", activeUsers.size)
     });
@@ -35,7 +40,7 @@ exports.eventconnection = (io, socket) => {
     socket.on("removeusers", data => {
         const userdata = JSON.parse(data);
 
-        console.log(userdata)
+        dlog(userdata)
         
         const username = userdata.username;
         const region = userdata.region;
@@ -46,20 +51,20 @@ exports.eventconnection = (io, socket) => {
             activeUsers.delete(username)
         }
 
-        console.log(`User ${username} with region ${region} removed on ${process.env.SERVER_REGION}`);
+        dlog(`User ${username} with region ${region} removed on ${process.env.SERVER_REGION}`);
 
         socket.emit("sendusercount", activeUsers.size)
     })
 
     socket.on("disconnect", (reason) => {
-        console.log(`Master Server Socket ${socket.id} disconnected. Reason: ${reason}`);
+        dlog(`Master Server Socket ${socket.id} disconnected. Reason: ${reason}`);
         activeUsers.clear()
     });
 
     socket.on("playerquit", (data) => {
         const userdata = JSON.parse(data)
         const username = userdata.username
-        console.log(`User ${username} disconnected.`);
+        dlog(`User ${username} disconnected.`);
         for (const match of matches) {
             const index = match.players.indexOf(username);
             if (index !== -1) match.players.splice(index, 1);
@@ -72,7 +77,7 @@ exports.eventconnection = (io, socket) => {
             const roomname = data?.roomname;
             const socketid = data?.socketid;
 
-            console.log(`User ${username} socket ${socketid} quit on match room ${roomname}.`);
+            dlog(`User ${username} socket ${socketid} quit on match room ${roomname}.`);
 
             if (!roomname) {
                 console.warn("⚠️ quitonmatch missing roomname");
@@ -85,7 +90,7 @@ exports.eventconnection = (io, socket) => {
                 // still clean activeMatches if it exists (prevents health leak)
                 if (activeMatches?.[roomname]) {
                     delete activeMatches[roomname];
-                    console.log(`🧹 activeMatches cleared (match missing): ${roomname}`);
+                    dlog(`🧹 activeMatches cleared (match missing): ${roomname}`);
                 }
                 return;
             }
@@ -104,9 +109,12 @@ exports.eventconnection = (io, socket) => {
                 }
             }
 
-            // Fallback: remove by username if socketid not found
+            // Fallback: remove by username if socketid not found.
+            // match.players holds objects ({username, avatarid, isBot}), so a
+            // raw indexOf(string) never matched — the player stayed in the room
+            // and kept receiving its broadcasts after quitting.
             if (!removed && username) {
-                const pIndex = match.players.indexOf(username);
+                const pIndex = match.players.findIndex(p => !p.isBot && p.username === username);
                 if (pIndex !== -1) {
                     match.players.splice(pIndex, 1);
                     match.playersocket.splice(pIndex, 1);
@@ -134,12 +142,12 @@ exports.eventconnection = (io, socket) => {
 
                 // remove from matches
                 matches.splice(matchIndex, 1);
-                console.log(`🗑️ Room ${roomname} removed (no real players left)`);
+                dlog(`🗑️ Room ${roomname} removed (no real players left)`);
 
                 // remove from activeMatches (what your health check reads)
                 if (activeMatches?.[roomname]) {
                     delete activeMatches[roomname];
-                    console.log(`🧹 activeMatches cleared: ${roomname}`);
+                    dlog(`🧹 activeMatches cleared: ${roomname}`);
                 }
 
                 return;
@@ -169,4 +177,5 @@ exports.eventconnection = (io, socket) => {
     removereconnect(io, socket)
     serverremovereconnectplayer(io, socket)
     doneroom(io, socket)
+    cancelfindmatch(io, socket)
 }
